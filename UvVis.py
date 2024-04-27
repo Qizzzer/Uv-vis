@@ -24,7 +24,7 @@ class ImageLabel(QLabel):
             scale_w = pixmap.width() / self.width()
             scale_h = pixmap.height() / self.height()
             real_x, real_y = int(x * scale_w), int(y * scale_h)
-            self.setToolTip(f"Coordinates: ({real_y}, {real_x})")
+            self.setToolTip(f"Coordinates: ({real_x}, {real_y})")
             self.setCursor(QCursor(Qt.CrossCursor))
 
 class MockCamera:
@@ -53,7 +53,7 @@ class MockCamera:
             def simulate_image(self):
                 # Return a dummy image array (e.g., a black image for simplicity)
                 #return np.zeros((480, 640), dtype=np.uint8)
-                return np.random.randint(0, 255, (1280, 1530), dtype=np.uint8)
+                return np.random.randint(0, 255, (2048, 2448), dtype=np.uint8)
 
         return GrabResult()
 
@@ -64,8 +64,6 @@ class CameraControlApp(QWidget):
     def __init__(self):
         super().__init__()
         self.camera = None
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.updateImageDisplay)
         self.initUI()
 
     def initUI(self):
@@ -109,7 +107,7 @@ class CameraControlApp(QWidget):
 
         # Directory Display
         self.directoryDisplayLabel = QLabel("Save Directories will be displayed here")
-        #self.directoryDisplayLabel.clicked.connect(self.updateDirectoryDisplay())
+        # self.directoryDisplayLabel.clicked.connect(self.updateDirectoryDisplay())
 
         # Image Processing Controls Group
         imageProcessingGroup = QGroupBox("Image Processing")
@@ -149,7 +147,7 @@ class CameraControlApp(QWidget):
         spectralLayout.addWidget(self.spectral577nm, 1, 1)
 
         spectralLayout.addWidget(QLabel("579nm:"), 1, 2)
-        self.spectral579nm = QLineEdit("400",)  #
+        self.spectral579nm = QLineEdit("400", )  #
         self.spectral579nm.setFixedWidth(50)
         spectralLayout.addWidget(self.spectral579nm, 1, 3)
         spectralGroup.setLayout(spectralLayout)
@@ -206,18 +204,11 @@ class CameraControlApp(QWidget):
                     self.camera = pylon.InstantCamera(pylon.TlFactory.GetInstance().CreateDevice(device))
                     break
         self.camera.Open()
-        if self.camera.IsOpen():
-            self.timer.start(100)  # Start updating the display every 100 ms
         exposureTime = int(self.exposureTimeInput.text())
         if selectedCamera != "Virtual Camera":
             self.camera.ExposureTimeAbs.SetValue(exposureTime)
         print(f"Camera initialized with exposure time: {exposureTime}us")
         self.updateDirectoryDisplay(f"Camera initialized with exposure time: {exposureTime}us")
-
-    def openCamera(self, imageType):
-        self.camera.Open()
-        if self.camera.IsOpen():
-            self.timer.start(100)  # Start updating the display every 100 ms
 
     def captureImage(self, imageType):
         if not self.camera or not self.camera.IsOpen:
@@ -229,10 +220,9 @@ class CameraControlApp(QWidget):
         save_directory = imageType
         if not os.path.exists(save_directory):
             os.makedirs(save_directory)
-        self.timer.stop()
+
         # Capture and save the image
         self.camera.StartGrabbingMax(1)
-        grabResult = self.camera.RetrieveResult(5000,None)
         grabResult = self.camera.RetrieveResult(5000, pylon.TimeoutHandling_ThrowException)
         if grabResult.GrabSucceeded():
             img = grabResult.Array
@@ -240,31 +230,11 @@ class CameraControlApp(QWidget):
             filename = f"{imageType}_{timestamp}.png"
             cv2.imwrite(os.path.join(save_directory, filename), img)
             imagePath = os.path.join(save_directory, filename)
-            image = QImage(grabResult.Array.data, grabResult.Array.shape[1], grabResult.Array.shape[0], QImage.Format_Grayscale8)
-            pixmap = QPixmap.fromImage(image)
-            self.imageDisplayLabel.setPixmap(pixmap)
+            self.updateImageDisplay(imagePath)
             self.directoryDisplayLabel.setText(f"Last saved in: {os.path.abspath(save_directory)}")
             print(f"Image saved in {imagePath}")
             self.updateDirectoryDisplay(f"Image saved in {imagePath}，image maxpixe is {img.max()}")
         grabResult.Release()
-
-    def updateImageDisplay(self):
-        if self.camera.IsOpen():
-            result = self.camera.RetrieveResult(5000, None)
-            result = self.camera.RetrieveResult(5000, pylon.TimeoutHandling_ThrowException)
-            if result.GrabSucceeded():
-                image = QImage(result.Array.data, result.Array.shape[1], result.Array.shape[0], QImage.Format_Grayscale8)
-                #image = QImage(result.Array.data, result.Array.shape[1], result.Array.shape[0], QImage.Format_RGB888)
-                pixmap = QPixmap.fromImage(image)
-                self.imageDisplayLabel.setPixmap(pixmap.scaled(self.imageDisplayLabel.size(), Qt.KeepAspectRatio))
-    def updateDirectoryDisplay(self, message):
-        self.directoryDisplayLabel.setText(message)
-
-    def closeCamera(self):
-        if self.camera and self.camera.IsOpen:
-            self.camera.Close()
-            self.updateDirectoryDisplay(f"Camera closed")
-            print("Camera closed")
 
     def averageImages(self, imageType):
         # Example to average images in the 'sample_picture' folder
@@ -323,7 +293,7 @@ class CameraControlApp(QWidget):
     def findMaxSumAreas(self):
         # Example usage with an averaged image
         imagePath = 'sample_picture/average_sample_picture.png'
-        average_image = cv2.imread(imagePath,cv2.IMREAD_GRAYSCALE)
+        average_image = cv2.imread(imagePath)
         if average_image is not None:
             max_sums, starting_rows = self.find_non_overlapping_max_sum_areas(average_image)
             message = ""
@@ -336,6 +306,7 @@ class CameraControlApp(QWidget):
 
     @staticmethod
     def find_non_overlapping_max_sum_areas(average_image, num_areas=3, rows_per_area=50, min_gap=200):
+        average_image = average_image[:, :, 0]
         # Initialize variables to store the maximum sums and their starting rows
         max_sums = []
         starting_rows = []
@@ -362,95 +333,37 @@ class CameraControlApp(QWidget):
             # Set the rows in the current area and a buffer above and below it to zero
             buffer = min_gap + rows_per_area
             average_image[max(0, start_row - buffer):min(end_row + buffer, average_image.shape[0]), :] = 0
+
         return max_sums, starting_rows
 
-
-    def process_image_areas(self):
-        directories = ['water_picture', 'sample_picture']
-        results = []
-
-        for dir_name in directories:
-            # Construct path to the average image
-            image_path = os.path.join(dir_name, 'average_image.png')
-            image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)  # Assuming grayscale for simplicity
-            if image is not None:
-                # Assuming find_non_overlapping_max_sum_areas is already defined
-                _, starting_rows = self.find_non_overlapping_max_sum_areas(image)
-
-                # Extract and process the specified areas
-                for start_row in starting_rows[:3]:  # Assuming we need the first three areas
-                    end_row = start_row + 50  # Assuming the area height is 50 rows
-                    area = image[start_row:end_row, :]
-
-                    # Example operation: calculate the sum of the area
-                    area_sum = np.sum(area)
-                    results.append(area_sum)
-
-                    # Perform other operations as needed
-
-        # Save the results to a text file
-        with open('image_processing_results.txt', 'w') as file:
-            for result in results:
-                file.write(f"{result}\n")
-
-        print("Image processing complete. Results saved to image_processing_results.txt.")
-
-    @staticmethod
-    def splitImage(path, first_area, second_area, third_area, length):
-        img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-        t = img[first_area:first_area + length, :]
-        s = img[second_area:second_area + length, :]
-        c = img[third_area:third_area + length, :]
-        return t, s, c
-
-    @staticmethod
-    def averageIntense(t, s, c):
-        t_avg = np.average(t, axis=0)
-        s_avg = np.average(s, axis=0)
-        c_avg = np.average(c, axis=0)
-        return t_avg, s_avg, c_avg
-
-    @staticmethod
-    def spectralCalibration(self):
-        # 汞氩灯特征峰
-        l1, l2, l3, l4 = 437, 546, 577, 579
-        # 对应的序列数
-        n1, n2, n3, n4 = int(self.spectral437nm.text()), int(self.spectral546nm.text()), int(self.spectral577nm.text()), int(self.spectral579nm.text())
-        y_train = np.array([l1, l2, l3, l4])
-        x_train = np.array([n1, n2, n3, n4])
-        poly = PolynomialFeatures(degree=2)
-        x_train_poly = poly.fit_transform(x_train.reshape(-1, 1))
-        model = LinearRegression()
-        model.fit(x_train_poly, y_train)
-        image = cv2.imread("sample_picture/average_sample_picture.png",cv2.IMREAD_GRAYSCALE)
-        rows = image.shape[1]
-        x_test = np.arange(rows)
-        x_test_poly = poly.fit_transform(x_test.reshape(-1, 1))
-        y_pred = model.predict(x_test_poly)
-        print(y_pred)
-        print("模型的系数:", model.coef_)
-        print("模型的截距:", model.intercept_)
-        # plt.plot(y_pred,column_sum)
-        return y_pred
-
     def image2Spectral(self):
-        average_sample_picture = cv2.imread("sample_picture/average_sample_picture.png",cv2.IMREAD_GRAYSCALE)
+        average_sample_picture = cv2.imread("sample_picture/average_sample_picture.png", cv2.IMREAD_GRAYSCALE)
         # get three area
         max_sums, starting_rows = self.find_non_overlapping_max_sum_areas(average_sample_picture)
         first, second, third = starting_rows
 
         # average area
-        water_toushe, water_sanshe, water_canbi = self.splitImage("water_picture/average_water_picture.png", first, second, third, 50)
+        water_toushe, water_sanshe, water_canbi = self.splitImage(
+            "water_picture/average_water_picture.png", first,
+            second, third, 50)
         water_avg_t, water_avg_s, water_avg_c = self.averageIntense(water_toushe, water_sanshe, water_canbi)
 
-        water_decline_toushe, water_decline_sanshe, water_decline_canbi = self.splitImage("water_decline_picture/average_water_decline_picture.png", first, second, third, 50)
-        water_decline_avg_t, water_decline_avg_s, water_decline_avg_c = self.averageIntense(water_decline_toushe, water_decline_sanshe, water_decline_canbi)
+        water_decline_toushe, water_decline_sanshe, water_decline_canbi = self.splitImage(
+            "water_decline_picture/average_water_decline_picture.png", first, second, third, 50)
+        water_decline_avg_t, water_decline_avg_s, water_decline_avg_c = self.averageIntense(water_decline_toushe,
+                                                                                            water_decline_sanshe,
+                                                                                            water_decline_canbi)
 
-        sample_toushe, sample_sanshe, sample_canbi = self.splitImage("sample_picture/average_sample_picture.png", first, second, third, 50)
+        sample_toushe, sample_sanshe, sample_canbi = self.splitImage(
+            "sample_picture/average_sample_picture.png", first,
+            second, third, 50)
         sample_avg_t, sample_avg_s, sample_avg_c = self.averageIntense(sample_toushe, sample_sanshe, sample_canbi)
 
-        sample_decline_toushe, sample_decline_sanshe, sample_decline_canbi = self.splitImage("sample_decline_picture/average_sample_decline_picture.png", first, second, third, 50)
-        sample_decline_avg_t, sample_decline_avg_s, sample_decline_avg_c = self.averageIntense(sample_decline_toushe, sample_decline_sanshe, sample_decline_canbi)
+        sample_decline_toushe, sample_decline_sanshe, sample_decline_canbi = self.splitImage(
+            "sample_decline_picture/average_sample_decline_picture.png", first, second, third, 50)
+        sample_decline_avg_t, sample_decline_avg_s, sample_decline_avg_c = self.averageIntense(sample_decline_toushe,
+                                                                                               sample_decline_sanshe,
+                                                                                               sample_decline_canbi)
 
         # c_w为水溶液参比光路衰减系数
         c_w = (water_avg_c * 200) / water_decline_avg_c
@@ -474,20 +387,75 @@ class CameraControlApp(QWidget):
         # 校正后样品透射
         sample_avg_t = sample_avg_t / t2c
 
-        #计算吸收和散射
+        # 计算吸收和散射
         A = np.log10(sample_avg_c / sample_avg_t)
         S = np.log10((sample_avg_s + sample_avg_t) / sample_avg_t)
         spectral = self.spectralCalibration(self)
 
-        with open('output/xiaoguangdu.txt', 'w') as f:
+        with open('output/xiaoguangdu1.txt', 'w') as f:
             for i in range(len(A)):
                 # 将两个列表中的元素用逗号隔开，然后写入文件中
                 f.write(f"{spectral[i]},{A[i]}\n")
 
-        with open('output/sanshedu.txt', 'w') as f:
+        with open('output/sanshedu1.txt', 'w') as f:
             for i in range(len(S)):
                 # 将两个列表中的元素用逗号隔开，然后写入文件中
                 f.write(f"{spectral[i]},{S[i]}\n")
+
+    @staticmethod
+    def splitImage(path, first_area, second_area, third_area, length):
+        img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+        t = img[first_area:first_area + length, :]
+        s = img[second_area:second_area + length, :]
+        c = img[third_area:third_area + length, :]
+        return t, s, c
+
+    @staticmethod
+    def averageIntense(t, s, c):
+        t_avg = np.average(t, axis=0)
+        s_avg = np.average(s, axis=0)
+        c_avg = np.average(c, axis=0)
+        return t_avg, s_avg, c_avg
+
+    @staticmethod
+    def spectralCalibration(self):
+        # 汞氩灯特征峰
+        l1, l2, l3, l4 = 437, 546, 577, 579
+        # 对应的序列数
+        n1, n2, n3, n4 = int(self.spectral437nm.text()), int(self.spectral546nm.text()), int(
+            self.spectral577nm.text()), int(self.spectral579nm.text())
+        y_train = np.array([l1, l2, l3, l4])
+        x_train = np.array([n1, n2, n3, n4])
+        poly = PolynomialFeatures(degree=2)
+        x_train_poly = poly.fit_transform(x_train.reshape(-1, 1))
+        model = LinearRegression()
+        model.fit(x_train_poly, y_train)
+        image = cv2.imread("sample_picture/average_sample_picture.png", cv2.IMREAD_GRAYSCALE)
+        rows = image.shape[1]
+        x_test = np.arange(rows)
+        x_test_poly = poly.fit_transform(x_test.reshape(-1, 1))
+        y_pred = model.predict(x_test_poly)
+        print(y_pred)
+        print("模型的系数:", model.coef_)
+        print("模型的截距:", model.intercept_)
+        # plt.plot(y_pred,column_sum)
+        return y_pred
+
+    def updateImageDisplay(self, imagePath):
+        pixmap = QPixmap(imagePath)
+        self.imageDisplayLabel.setPixmap(
+            pixmap.scaled(self.imageDisplayLabel.width(), self.imageDisplayLabel.height(), Qt.KeepAspectRatio))
+
+
+    def updateDirectoryDisplay(self, message):
+        self.directoryDisplayLabel.setText(message)
+
+
+    def closeCamera(self):
+        if self.camera and self.camera.IsOpen:
+            self.camera.Close()
+            print("Camera closed")
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
