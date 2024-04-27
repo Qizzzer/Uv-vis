@@ -1,6 +1,8 @@
 import os
 import time
 import numpy as np
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.linear_model import LinearRegression
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QLabel, QLineEdit, QHBoxLayout,QComboBox, QGroupBox, QGridLayout, QScrollArea
 from PyQt5.QtGui import QPixmap, QImage ,QCursor
 from PyQt5.QtCore import Qt, QTimer
@@ -84,19 +86,25 @@ class CameraControlApp(QWidget):
         self.exposureTimeInput = QLineEdit("3000")  # Default exposure time in microseconds
         cameraSettingsLayout.addWidget(self.exposureTimeInput, 1, 1)
 
+        self.initCameraBtn = QPushButton("Init Camera")
+        self.closeCameraBtn = QPushButton("Close Camera")
+        cameraSettingsLayout.addWidget(self.initCameraBtn, 2, 0)
+        cameraSettingsLayout.addWidget(self.closeCameraBtn, 2, 1)
         cameraSettingsGroup.setLayout(cameraSettingsLayout)
 
         # Camera Controls Group
         cameraControlGroup = QGroupBox("Camera Controls")
         cameraControlLayout = QVBoxLayout()
-        self.initCameraBtn = QPushButton("Init Camera")
+
         self.captureAqueousBtn = QPushButton("Capture Water")
         self.captureSampleBtn = QPushButton("Capture Sample")
-        self.closeCameraBtn = QPushButton("Close Camera")
-        cameraControlLayout.addWidget(self.initCameraBtn)
+        self.captureAqueousDeclineBtn = QPushButton("Capture Water Decline")
+        self.captureSampleDeclineBtn = QPushButton("Capture Sample Decline")
+
         cameraControlLayout.addWidget(self.captureAqueousBtn)
         cameraControlLayout.addWidget(self.captureSampleBtn)
-        cameraControlLayout.addWidget(self.closeCameraBtn)
+        cameraControlLayout.addWidget(self.captureAqueousDeclineBtn)
+        cameraControlLayout.addWidget(self.captureSampleDeclineBtn)
         cameraControlGroup.setLayout(cameraControlLayout)
 
         # Directory Display
@@ -108,10 +116,14 @@ class CameraControlApp(QWidget):
         imageProcessingLayout = QVBoxLayout()
         self.averageSamplesBtn = QPushButton("Average Sample")
         self.averageWatersBtn = QPushButton("Average Water")
+        self.averageSamplesDeclineBtn = QPushButton("Average Sample Decline")
+        self.averageWatersDeclineBtn = QPushButton("Average Water Decline")
         self.findMaxSumAreasBtn = QPushButton("Find Max Sum Areas")
         self.processImagesBtn = QPushButton("Process Image Areas")
         imageProcessingLayout.addWidget(self.averageSamplesBtn)
         imageProcessingLayout.addWidget(self.averageWatersBtn)
+        imageProcessingLayout.addWidget(self.averageSamplesDeclineBtn)
+        imageProcessingLayout.addWidget(self.averageWatersDeclineBtn)
         imageProcessingLayout.addWidget(self.findMaxSumAreasBtn)
         imageProcessingLayout.addWidget(self.processImagesBtn)
         imageProcessingGroup.setLayout(imageProcessingLayout)
@@ -165,11 +177,15 @@ class CameraControlApp(QWidget):
         self.initCameraBtn.clicked.connect(self.initCamera)
         self.captureAqueousBtn.clicked.connect(lambda: self.captureImage("water_picture"))
         self.captureSampleBtn.clicked.connect(lambda: self.captureImage("sample_picture"))
+        self.captureAqueousDeclineBtn.clicked.connect(lambda: self.captureImage("water_decline_picture"))
+        self.captureSampleDeclineBtn.clicked.connect(lambda: self.captureImage("sample_decline_picture"))
         self.closeCameraBtn.clicked.connect(self.closeCamera)
         self.averageSamplesBtn.clicked.connect(lambda: self.averageImages("sample_picture"))
         self.averageWatersBtn.clicked.connect(lambda: self.averageImages("water_picture"))
+        self.averageSamplesDeclineBtn.clicked.connect(lambda: self.averageImages("sample_decline_picture"))
+        self.averageWatersDeclineBtn.clicked.connect(lambda: self.averageImages("water_decline_picture"))
         self.findMaxSumAreasBtn.clicked.connect(self.findMaxSumAreas)
-        self.processImagesBtn.clicked.connect(self.process_image_areas)
+        self.processImagesBtn.clicked.connect(self.image2Spectral)
 
     def listCameras(self):
         devices = pylon.TlFactory.GetInstance().EnumerateDevices()
@@ -217,6 +233,7 @@ class CameraControlApp(QWidget):
         # Capture and save the image
         self.camera.StartGrabbingMax(1)
         grabResult = self.camera.RetrieveResult(5000,None)
+        grabResult = self.camera.RetrieveResult(5000, pylon.TimeoutHandling_ThrowException)
         if grabResult.GrabSucceeded():
             img = grabResult.Array
             timestamp = time.strftime("%Y%m%d_%H%M%S")
@@ -234,6 +251,7 @@ class CameraControlApp(QWidget):
     def updateImageDisplay(self):
         if self.camera.IsOpen():
             result = self.camera.RetrieveResult(5000, None)
+            result = self.camera.RetrieveResult(5000, pylon.TimeoutHandling_ThrowException)
             if result.GrabSucceeded():
                 image = QImage(result.Array.data, result.Array.shape[1], result.Array.shape[0], QImage.Format_Grayscale8)
                 #image = QImage(result.Array.data, result.Array.shape[1], result.Array.shape[0], QImage.Format_RGB888)
@@ -345,6 +363,8 @@ class CameraControlApp(QWidget):
             buffer = min_gap + rows_per_area
             average_image[max(0, start_row - buffer):min(end_row + buffer, average_image.shape[0]), :] = 0
         return max_sums, starting_rows
+
+
     def process_image_areas(self):
         directories = ['water_picture', 'sample_picture']
         results = []
@@ -376,7 +396,7 @@ class CameraControlApp(QWidget):
         print("Image processing complete. Results saved to image_processing_results.txt.")
 
     @staticmethod
-    def split_image(path, first_area, second_area, third_area, length):
+    def splitImage(path, first_area, second_area, third_area, length):
         img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
         t = img[first_area:first_area + length, :]
         s = img[second_area:second_area + length, :]
@@ -384,29 +404,90 @@ class CameraControlApp(QWidget):
         return t, s, c
 
     @staticmethod
-    def average_intense(t, s, c):
+    def averageIntense(t, s, c):
         t_avg = np.average(t, axis=0)
         s_avg = np.average(s, axis=0)
         c_avg = np.average(c, axis=0)
         return t_avg, s_avg, c_avg
 
-    # 自己写的输出光谱函数
-    def image2spectal(self):
-        average_sample_picture = cv2.imread("sample_picture/average_sample_picture",cv2.IMREAD_GRAYSCALE)
+    @staticmethod
+    def spectralCalibration(self):
+        # 汞氩灯特征峰
+        l1, l2, l3, l4 = 437, 546, 577, 579
+        # 对应的序列数
+        n1, n2, n3, n4 = int(self.spectral437nm.text()), int(self.spectral546nm.text()), int(self.spectral577nm.text()), int(self.spectral579nm.text())
+        y_train = np.array([l1, l2, l3, l4])
+        x_train = np.array([n1, n2, n3, n4])
+        poly = PolynomialFeatures(degree=2)
+        x_train_poly = poly.fit_transform(x_train.reshape(-1, 1))
+        model = LinearRegression()
+        model.fit(x_train_poly, y_train)
+        image = cv2.imread("sample_picture/average_sample_picture.png",cv2.IMREAD_GRAYSCALE)
+        rows = image.shape[1]
+        x_test = np.arange(rows)
+        x_test_poly = poly.fit_transform(x_test.reshape(-1, 1))
+        y_pred = model.predict(x_test_poly)
+        print(y_pred)
+        print("模型的系数:", model.coef_)
+        print("模型的截距:", model.intercept_)
+        # plt.plot(y_pred,column_sum)
+        return y_pred
+
+    def image2Spectral(self):
+        average_sample_picture = cv2.imread("sample_picture/average_sample_picture.png",cv2.IMREAD_GRAYSCALE)
         # get three area
         max_sums, starting_rows = self.find_non_overlapping_max_sum_areas(average_sample_picture)
         first, second, third = starting_rows
+
         # average area
-        water_toushe, water_sanshe, water_canbi = self.split_image("water_picture/average_water_picture", first, second, third, 50)
-        water_avg_t, water_avg_s, water_avg_c = self.average_intense(water_toushe, water_sanshe, water_canbi)
-        sample_toushe, sample_sanshe, sample_canbi = self.split_image("sample_picture/average_sample_picture", first, second, third, 50)
-        sample_avg_t, sample_avg_s, sample_avg_c = self.average_intense(sample_toushe, sample_sanshe, sample_canbi)
-        # calculate xiaoguang
-        xiaoguang = np.log10(sample_avg_c / sample_avg_t)
+        water_toushe, water_sanshe, water_canbi = self.splitImage("water_picture/average_water_picture.png", first, second, third, 50)
+        water_avg_t, water_avg_s, water_avg_c = self.averageIntense(water_toushe, water_sanshe, water_canbi)
+
+        water_decline_toushe, water_decline_sanshe, water_decline_canbi = self.splitImage("water_decline_picture/average_water_decline_picture.png", first, second, third, 50)
+        water_decline_avg_t, water_decline_avg_s, water_decline_avg_c = self.averageIntense(water_decline_toushe, water_decline_sanshe, water_decline_canbi)
+
+        sample_toushe, sample_sanshe, sample_canbi = self.splitImage("sample_picture/average_sample_picture.png", first, second, third, 50)
+        sample_avg_t, sample_avg_s, sample_avg_c = self.averageIntense(sample_toushe, sample_sanshe, sample_canbi)
+
+        sample_decline_toushe, sample_decline_sanshe, sample_decline_canbi = self.splitImage("sample_decline_picture/average_sample_decline_picture.png", first, second, third, 50)
+        sample_decline_avg_t, sample_decline_avg_s, sample_decline_avg_c = self.averageIntense(sample_decline_toushe, sample_decline_sanshe, sample_decline_canbi)
+
+        # c_w为水溶液参比光路衰减系数
+        c_w = (water_avg_c * 200) / water_decline_avg_c
+        c_w = list(c_w)
+        c_yp = (sample_avg_c * 200) / sample_decline_avg_c
+        c_yp = list(c_yp)
+        # t为透射光路的衰减系数
+        t_w = (water_avg_t * 200) / water_decline_avg_t
+        t_w = list(t_w)
+        t_yp = (sample_avg_t * 200) / sample_decline_avg_t
+        t_yp = list(t_yp)
+
+        # 得到考虑衰减系数后样品和水溶液三条光路的光强
+        sample_avg_t = sample_avg_t * t_yp
+        sample_avg_c = sample_avg_c * c_yp
+        water_avg_c = water_avg_c * c_w
+        water_avg_t = water_avg_t * t_w
+
+        # 透射和参比校准
+        t2c = water_avg_t / water_avg_c
+        # 校正后样品透射
+        sample_avg_t = sample_avg_t / t2c
+
+        #计算吸收和散射
+        A = np.log10(sample_avg_c / sample_avg_t)
+        S = np.log10((sample_avg_s + sample_avg_t) / sample_avg_t)
+        spectral = self.spectralCalibration(self)
+
         with open('output/xiaoguangdu.txt', 'w') as f:
-            for i in range(len(xiaoguang)):
+            for i in range(len(A)):
                 # 将两个列表中的元素用逗号隔开，然后写入文件中
-                f.write(f"{[i]},{xiaoguang[i]}\n")
+                f.write(f"{spectral[i]},{A[i]}\n")
+
+        with open('output/sanshedu.txt', 'w') as f:
+            for i in range(len(S)):
+                # 将两个列表中的元素用逗号隔开，然后写入文件中
+                f.write(f"{spectral[i]},{S[i]}\n")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
