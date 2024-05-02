@@ -24,7 +24,7 @@ class ImageLabel(QLabel):
             scale_w = pixmap.width() / self.width()
             scale_h = pixmap.height() / self.height()
             real_x, real_y = int(x * scale_w), int(y * scale_h)
-            self.setToolTip(f"Coordinates: ({real_x}, {real_y})")
+            self.setToolTip(f"Coordinates: ({real_y}, {real_x})")
             self.setCursor(QCursor(Qt.CrossCursor))
 
 class MockCamera:
@@ -137,17 +137,17 @@ class CameraControlApp(QWidget):
         spectralLayout.addWidget(self.spectral437nm, 0, 1)
 
         spectralLayout.addWidget(QLabel("546nm:"), 0, 2)
-        self.spectral546nm = QLineEdit("300")  #
+        self.spectral546nm = QLineEdit("683")  #
         self.spectral546nm.setFixedWidth(50)
         spectralLayout.addWidget(self.spectral546nm, 0, 3)
 
         spectralLayout.addWidget(QLabel("577nm:"), 1, 0)
-        self.spectral577nm = QLineEdit("400")  #
+        self.spectral577nm = QLineEdit("820")  #
         self.spectral577nm.setFixedWidth(50)
         spectralLayout.addWidget(self.spectral577nm, 1, 1)
 
         spectralLayout.addWidget(QLabel("579nm:"), 1, 2)
-        self.spectral579nm = QLineEdit("400", )  #
+        self.spectral579nm = QLineEdit("829", )  #
         self.spectral579nm.setFixedWidth(50)
         spectralLayout.addWidget(self.spectral579nm, 1, 3)
         spectralGroup.setLayout(spectralLayout)
@@ -249,7 +249,7 @@ class CameraControlApp(QWidget):
             # Save the averaged image
             cv2.imwrite(os.path.join(folder_path, f'average_{folder_path}.png'), average_image)
             print("Average image saved")
-            self.updateDirectoryDisplay(f"Average image saved in {folder_path}/average_{folder_path}.png")
+            self.updateDirectoryDisplay(f"Average image saved in {folder_path}/average_{folder_path}.png, image maxpixe is {average_image.max()}")
 
     @staticmethod
     def average_images_in_folder(folder_path):
@@ -292,10 +292,10 @@ class CameraControlApp(QWidget):
 
     def findMaxSumAreas(self):
         # Example usage with an averaged image
-        imagePath = 'sample_picture/average_sample_picture.png'
-        average_image = cv2.imread(imagePath)
+        average_image = cv2.imread("sample_decline_picture/average_sample_decline_picture.png")
         if average_image is not None:
-            max_sums, starting_rows = self.find_non_overlapping_max_sum_areas(average_image)
+            # max_sums, starting_rows = self.find_non_overlapping_max_sum_areas(average_image)
+            starting_rows = self.find_non_overlapping_max_sum_areas(average_image)
             message = ""
             for i, start_row in enumerate(starting_rows, start=1):
                 end_row = start_row + 50  # Assuming 50 as rows_per_area
@@ -306,101 +306,93 @@ class CameraControlApp(QWidget):
 
     @staticmethod
     def find_non_overlapping_max_sum_areas(average_image, num_areas=3, rows_per_area=50, min_gap=200):
-        average_image = average_image[:, :, 0]
+        average_image2 = average_image[:, :, 0]
         # Initialize variables to store the maximum sums and their starting rows
         max_sums = []
         starting_rows = []
 
+        # Calculate the sum of pixel values for each possible 10-row area
+        total_rows = average_image2.shape[0]
+        area_sums = [np.sum(average_image2[row:row + rows_per_area, :]) for row in
+                     range(total_rows - rows_per_area + 1)]
+
+        # Initialize a list to store indices that have been considered for areas to ensure no overlap
+        considered_rows = []
+
         for _ in range(num_areas):
-            # Calculate the sum of pixel values for each row
-            row_sums = np.sum(average_image, axis=1)
+            max_sum = -1
+            start_row = None
 
             # Find the starting row for the current area with the maximum sum
-            start_row = np.argmax(row_sums)
+            for i in range(len(area_sums)):
+                # Ensure this row has not been considered in an overlapping previous area
+                if i in considered_rows:
+                    continue
+
+                if area_sums[i] > max_sum:
+                    max_sum = area_sums[i]
+                    start_row = i
 
             # Extract the rows for the current area
             end_row = start_row + rows_per_area
-            area_range = (start_row, end_row)
-            area_image = average_image[start_row:end_row, :]
-
-            # Calculate the maximum sum for the current area
-            max_sum = np.sum(area_image)
-
-            # Set the maximum sum and starting row for the current area
             max_sums.append(max_sum)
             starting_rows.append(start_row)
 
-            # Set the rows in the current area and a buffer above and below it to zero
-            buffer = min_gap + rows_per_area
-            average_image[max(0, start_row - buffer):min(end_row + buffer, average_image.shape[0]), :] = 0
+            # Mark the rows in the current area and a buffer above and below it as considered
+            for j in range(max(0, start_row - min_gap), min(end_row + min_gap, total_rows)):
+                considered_rows.append(j)
 
-        return max_sums, starting_rows
+        return starting_rows
 
     def image2Spectral(self):
-        average_sample_picture = cv2.imread("sample_picture/average_sample_picture.png", cv2.IMREAD_GRAYSCALE)
-        # get three area
-        max_sums, starting_rows = self.find_non_overlapping_max_sum_areas(average_sample_picture)
-        first, second, third = starting_rows
+        # 样品+衰减
+        sample_decline = cv2.imread("sample_decline_picture/average_sample_decline_picture.png")
+        starting_rows = self.find_non_overlapping_max_sum_areas(sample_decline)
+        starting_rows.sort()
 
-        # average area
-        water_toushe, water_sanshe, water_canbi = self.splitImage(
-            "water_picture/average_water_picture.png", first,
-            second, third, 50)
-        water_avg_t, water_avg_s, water_avg_c = self.averageIntense(water_toushe, water_sanshe, water_canbi)
+        sample_decline_s = sample_decline[starting_rows[1]:starting_rows[1] + 50, :, 1]
+        sample_decline_s = np.average(sample_decline_s, axis=0)
 
-        water_decline_toushe, water_decline_sanshe, water_decline_canbi = self.splitImage(
-            "water_decline_picture/average_water_decline_picture.png", first, second, third, 50)
-        water_decline_avg_t, water_decline_avg_s, water_decline_avg_c = self.averageIntense(water_decline_toushe,
-                                                                                            water_decline_sanshe,
-                                                                                            water_decline_canbi)
+        # 样品
+        sample = cv2.imread("sample_picture/average_sample_picture.png")
 
-        sample_toushe, sample_sanshe, sample_canbi = self.splitImage(
-            "sample_picture/average_sample_picture.png", first,
-            second, third, 50)
-        sample_avg_t, sample_avg_s, sample_avg_c = self.averageIntense(sample_toushe, sample_sanshe, sample_canbi)
+        sample_c = sample[starting_rows[2]:starting_rows[2] + 50, :, 1]
+        sample_c = np.average(sample_c, axis=0)
+        sample_t = sample[starting_rows[0]:starting_rows[0] + 50, :, 1]
+        sample_t = np.average(sample_t, axis=0)
 
-        sample_decline_toushe, sample_decline_sanshe, sample_decline_canbi = self.splitImage(
-            "sample_decline_picture/average_sample_decline_picture.png", first, second, third, 50)
-        sample_decline_avg_t, sample_decline_avg_s, sample_decline_avg_c = self.averageIntense(sample_decline_toushe,
-                                                                                               sample_decline_sanshe,
-                                                                                               sample_decline_canbi)
+        water = cv2.imread("water_picture/average_water_picture.png")
 
-        # c_w为水溶液参比光路衰减系数
-        c_w = (water_avg_c * 200) / water_decline_avg_c
-        c_w = list(c_w)
-        c_yp = (sample_avg_c * 200) / sample_decline_avg_c
-        c_yp = list(c_yp)
-        # t为透射光路的衰减系数
-        t_w = (water_avg_t * 200) / water_decline_avg_t
-        t_w = list(t_w)
-        t_yp = (sample_avg_t * 200) / sample_decline_avg_t
-        t_yp = list(t_yp)
+        water_c = water[starting_rows[2]:starting_rows[2] + 50, :, 1]
+        water_c = np.average(water_c, axis=0)
+        water_t = water[starting_rows[0]:starting_rows[0] + 50, :, 1]
+        water_t = np.average(water_t, axis=0)
 
-        # 得到考虑衰减系数后样品和水溶液三条光路的光强
-        sample_avg_t = sample_avg_t * t_yp
-        sample_avg_c = sample_avg_c * c_yp
-        water_avg_c = water_avg_c * c_w
-        water_avg_t = water_avg_t * t_w
+        # 计算水的衰减系数
+        t2c = water_t / water_c
+        sample_t = sample_t / t2c
+        sample_t = sample_t * 180
+        sample_c = sample_c * 180
+        sample_real_s = (sample_decline_s * 420.81) - 14.76
 
-        # 透射和参比校准
-        t2c = water_avg_t / water_avg_c
-        # 校正后样品透射
-        sample_avg_t = sample_avg_t / t2c
+        xiaoguang = np.log10(sample_c / sample_t)
+        A = np.log10(sample_c / (sample_t + sample_real_s))
+        S = np.log10((sample_real_s + sample_t) / sample_t)
+        # 波长校准函数存在问题
+        bochang = self.spectralCalibration()
 
-        # 计算吸收和散射
-        A = np.log10(sample_avg_c / sample_avg_t)
-        S = np.log10((sample_avg_s + sample_avg_t) / sample_avg_t)
-        spectral = self.spectralCalibration(self)
-
-        with open('output/xiaoguangdu1.txt', 'w') as f:
-            for i in range(len(A)):
+        with open('40Auxishou.txt', 'w') as f:
+            for i in range(len(bochang)):
                 # 将两个列表中的元素用逗号隔开，然后写入文件中
-                f.write(f"{spectral[i]},{A[i]}\n")
-
-        with open('output/sanshedu1.txt', 'w') as f:
-            for i in range(len(S)):
+                f.write(f"{bochang[i]},{A[i]}\n")
+        with open('40Ausanshedu.txt', 'w') as f:
+            for i in range(len(bochang)):
                 # 将两个列表中的元素用逗号隔开，然后写入文件中
-                f.write(f"{spectral[i]},{S[i]}\n")
+                f.write(f"{bochang[i]},{S[i]}\n")
+        with open('40Auxiaoguang.txt', 'w') as f:
+            for i in range(len(bochang)):
+                # 将两个列表中的元素用逗号隔开，然后写入文件中
+                f.write(f"{bochang[i]},{xiaoguang[i]}\n")
 
     @staticmethod
     def splitImage(path, first_area, second_area, third_area, length):
@@ -417,7 +409,7 @@ class CameraControlApp(QWidget):
         c_avg = np.average(c, axis=0)
         return t_avg, s_avg, c_avg
 
-    @staticmethod
+
     def spectralCalibration(self):
         # 汞氩灯特征峰
         l1, l2, l3, l4 = 437, 546, 577, 579
@@ -430,7 +422,7 @@ class CameraControlApp(QWidget):
         x_train_poly = poly.fit_transform(x_train.reshape(-1, 1))
         model = LinearRegression()
         model.fit(x_train_poly, y_train)
-        image = cv2.imread("sample_picture/average_sample_picture.png", cv2.IMREAD_GRAYSCALE)
+        image = cv2.imread("Hg/average_water_picture.png", cv2.IMREAD_GRAYSCALE)
         rows = image.shape[1]
         x_test = np.arange(rows)
         x_test_poly = poly.fit_transform(x_test.reshape(-1, 1))
@@ -460,5 +452,6 @@ class CameraControlApp(QWidget):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     ex = CameraControlApp()
+    a = ex.spectralCalibration()
     ex.show()
     sys.exit(app.exec_())
