@@ -130,7 +130,7 @@ class CameraControlApp(QWidget):
         spectralGroup = QGroupBox("Spectral wavelength calibration")
         spectralLayout = QGridLayout()
 
-        # Exposure Time Input 需要改写变量名
+        # Convert pixel sequence numbers to wavelengths
         spectralLayout.addWidget(QLabel("437nm :"), 0, 0)
         self.spectral437nm = QLineEdit("200")  #
         self.spectral437nm.setFixedWidth(50)
@@ -346,7 +346,7 @@ class CameraControlApp(QWidget):
 
     def image2Spectral(self):
         # 样品+衰减
-        sample_decline = cv2.imread("sample_decline_picture/average_sample_decline_picture.png")
+        sample_decline = cv2.imread("sample_decline_picture/40nmAu/average_sample_decline_picture.png")
         starting_rows = self.find_non_overlapping_max_sum_areas(sample_decline)
         starting_rows.sort()
 
@@ -354,7 +354,7 @@ class CameraControlApp(QWidget):
         sample_decline_s = np.average(sample_decline_s, axis=0)
 
         # 样品
-        sample = cv2.imread("sample_picture/average_sample_picture.png")
+        sample = cv2.imread("sample_picture/40nmAu/average_sample_picture.png")
 
         sample_c = sample[starting_rows[2]:starting_rows[2] + 50, :, 1]
         sample_c = np.average(sample_c, axis=0)
